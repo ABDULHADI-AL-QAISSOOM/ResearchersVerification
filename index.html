@@ -1,272 +1,159 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Researchers Verification Tool</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <style>
-    body{font-family:Inter,system-ui,Segoe UI,Roboto,Arial;margin:18px;color:#0f172a}
-    h1{font-size:20px;margin-bottom:6px}
-    label{display:block;margin:10px 0 6px;font-weight:600}
-    input[type=file]{display:block}
-    .row{display:flex;gap:12px;flex-wrap:wrap}
-    button{background:#0ea5e9;border:none;padding:8px 12px;border-radius:8px;color:white;cursor:pointer}
-    table{border-collapse:collapse;width:100%;margin-top:12px}
-    th,td{border:1px solid #e6eef6;padding:8px;text-align:left;font-size:13px}
-    th{background:#f1f9ff}
-    .ok{background:#ecfdf5}
-    .mismatch{background:#fff7f0;color:#7a271a}
-    .notfound{background:#fff1f2;color:#7a1a2a}
-    .summary{margin-top:12px;padding:10px;border-radius:8px;background:#f8fafc}
-    footer{margin-top:18px;font-size:12px;color:#64748b}
-    .controls{margin-top:12px}
-    .small{font-size:12px;color:#475569}
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 20px; background: #f9fafc; color: #333; }
+    h1 { text-align: center; color: #1d3557; }
+    p.description { text-align: center; max-width: 800px; margin: 10px auto 30px auto; color: #444; }
+    .uploader { background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.1); max-width: 600px; margin: 0 auto; }
+    label { font-weight: 600; }
+    input[type=file] { margin: 8px 0 16px 0; width: 100%; }
+    button { background: #1d3557; color: #fff; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; }
+    button:hover { background: #457b9d; }
+    .results { margin-top: 30px; }
+    .sheet-header { background: #457b9d; color: white; padding: 10px; border-radius: 6px; margin-top: 30px; font-weight: 600; }
+    table { border-collapse: collapse; width: 100%; margin-top: 10px; background: white; border-radius: 8px; overflow: hidden; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    th { background: #1d3557; color: #fff; }
+    tr.mismatch { background-color: #ffe6e6; }
+    tr.match { background-color: #e6ffe6; }
+    .summary { font-weight: bold; margin-top: 10px; }
+    footer { text-align:center; margin-top:40px; color:#777; font-size: 14px; }
   </style>
 </head>
 <body>
   <h1>Researchers Verification Tool</h1>
-  <p class="small">Upload the main Excel file (Researchers Evaluation Analysis) and the two verification files (Research Scientist and Research Technologist). The tool uses <strong>KFUPM ID</strong> as primary key and <strong>Category/Rank</strong> to pick which verification file to check against. It compares <em>Name, Research Center, Final Rating, Positivity Score</em>.</p>
+  <p class="description">Upload the <strong>Researchers Evaluation Analysis</strong> file and the two verification files from the system (<strong>Research Scientist</strong> and <strong>Research Technologist</strong>). The tool will process the following sheets automatically: All Researchers, Research Scientist, and Research Technologist. It uses the KFUPM ID as the key and Category/Rank or Sheet Name to determine which verification file to use. Ensure the column names are consistent: 'Name', 'Research Center', 'Final Rating', and 'Positivity Score'.</p>
 
-  <label>Main file ("Researchers Evaluation Analysis")</label>
-  <input id="mainFile" type="file" accept=".xlsx,.xls" />
-
-  <label>Verification file - Research Scientist</label>
-  <input id="verSci" type="file" accept=".xlsx,.xls" />
-
-  <label>Verification file - Research Technologist</label>
-  <input id="verTech" type="file" accept=".xlsx,.xls" />
-
-  <div class="controls">
-    <button id="run">Run Verification</button>
-    <button id="download" disabled>Download CSV Results</button>
-    <span id="status" class="small"></span>
+  <div class="uploader">
+    <label>Main File (Researchers Evaluation Analysis):</label>
+    <input type="file" id="mainFile" accept=".xlsx"><br>
+    <label>Research Scientist File:</label>
+    <input type="file" id="sciFile" accept=".xlsx"><br>
+    <label>Research Technologist File:</label>
+    <input type="file" id="techFile" accept=".xlsx"><br>
+    <button onclick="processFiles()">Process & Verify</button>
   </div>
 
-  <div id="summary" class="summary" style="display:none"></div>
-  <div id="results"></div>
+  <div id="results" class="results"></div>
 
-  <footer>
-    Designed π Hadi
-  </footer>
-
-  <!-- sheetjs -->
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script>
-    // helper: normalize text for comparison
-    function norm(v){
-      if(v===undefined || v===null) return '';
-      return String(v).trim().replace(/\s+/g,' ').toLowerCase();
-    }
-
-    function readFileAsArrayBuffer(file){
-      return new Promise((res,rej)=>{
-        const r = new FileReader();
-        r.onload = e => res(e.target.result);
-        r.onerror = e => rej(e);
-        r.readAsArrayBuffer(file);
-      });
-    }
-
-    async function workbookToJson(buf){
-      const wb = XLSX.read(buf, {type:'array'});
-      const out = {};
-      wb.SheetNames.forEach(name=>{
-        try{
-          out[name]=XLSX.utils.sheet_to_json(wb.Sheets[name], {defval:''});
-        }catch(e){out[name]=[]}
-      });
-      return out;
-    }
-
-    function pickVerificationFile(rank){
-      const r = norm(rank);
-      if(r.includes('technologist') || r.includes('technician') || r.includes('tech')) return 'tech';
-      if(r.includes('scientist') || r.includes('researcher') || r.includes('scient')) return 'sci';
-      // fallback: if ambiguous, prefer scientist
-      return 'sci';
-    }
-
-    function findByKFUPMId(arr,id){
-      if(!arr) return null;
-      const key = String(id).trim();
-      if(key==='') return null;
-      // try direct match on KFUPM ID or ID or Employee ID fields
-      return arr.find(r => {
-        for(const k of Object.keys(r)){
-          if(norm(k).includes('kfupm') || norm(k).includes('kfupm id') || norm(k).match(/id/)){
-            // try match on that field later
-          }
-        }
-        // fallback: check any value that equals id
-        return Object.values(r).some(v => String(v).trim()===key);
-      }) || null;
-    }
-
-    function smartFind(arr, id){
-      if(!arr) return null;
-      const key = String(id).trim();
-      // common column names to search values
-      const idCols = ['kfupm id','kfupm','id','employee id','employeeid'];
-      for(const row of arr){
-        for(const c of Object.keys(row)){
-          if(idCols.includes(norm(c))){
-            if(String(row[c]).trim()===key) return row;
-          }
-        }
-      }
-      // fallback: any cell exact match
-      for(const row of arr){
-        if(Object.values(row).some(v=>String(v).trim()===key)) return row;
-      }
-      return null;
-    }
-
-    function getField(row, candidates){
-      if(!row) return '';
-      for(const c of candidates){
-        for(const key of Object.keys(row)){
-          if(norm(key)===norm(c) || norm(key).includes(norm(c))) return row[key];
-        }
-      }
-      return '';
-    }
-
-    document.getElementById('run').addEventListener('click', async ()=>{
+    async function processFiles() {
       const mainFile = document.getElementById('mainFile').files[0];
-      const verSci = document.getElementById('verSci').files[0];
-      const verTech = document.getElementById('verTech').files[0];
-      const status = document.getElementById('status');
-      status.textContent='';
-
-      if(!mainFile || !verSci || !verTech){
-        status.textContent='Please upload all three files.';
+      const sciFile = document.getElementById('sciFile').files[0];
+      const techFile = document.getElementById('techFile').files[0];
+      if (!mainFile || !sciFile || !techFile) {
+        alert('Please upload all three files.');
         return;
       }
 
-      status.textContent='Reading files...';
-      const [mBuf,sBuf,tBuf] = await Promise.all([readFileAsArrayBuffer(mainFile), readFileAsArrayBuffer(verSci), readFileAsArrayBuffer(verTech)]);
-      const [mWb,sWb,tWb] = await Promise.all([workbookToJson(mBuf), workbookToJson(sBuf), workbookToJson(tBuf)]);
+      const mainWorkbook = await readWorkbook(mainFile);
+      const sciWorkbook = await readWorkbook(sciFile);
+      const techWorkbook = await readWorkbook(techFile);
 
-      // Build verification pools: merge all sheets in each verification file into single array
-      const verSciRows = [].concat(...Object.values(sWb));
-      const verTechRows = [].concat(...Object.values(tWb));
+      // Merge all sheets for both scientist and technologist files
+      const sciData = mergeAllSheets(sciWorkbook);
+      const techData = mergeAllSheets(techWorkbook);
 
-      // Determine which main sheets to inspect (use All Researchers, Research Scientist, Research Technologist if present)
-      const preferredSheets = ['All Researchers','All Researchers ','All Researcher','Research Scientist','Research Scientist ','Research Technologist','Research Technologist '];
-      const mainSheets = Object.keys(mWb).filter(n => preferredSheets.includes(n) || n.toLowerCase().includes('all') || n.toLowerCase().includes('research'));
-      // fallback use all
-      const sheetsToUse = mainSheets.length? mainSheets : Object.keys(mWb);
+      const sciMap = mapByKFUPMID(sciData);
+      const techMap = mapByKFUPMID(techData);
 
-      const results = [];
-      let total=0, sameCount=0, mismatchCount=0, notFoundCount=0;
+      const sheetNames = ["All Researchers", "Research Scientist", "Research Technologist"];
 
-      for(const sh of sheetsToUse){
-        const rows = mWb[sh]||[];
-        for(const row of rows){
-          total++;
-          const kfid = getField(row, ['KFUPM ID','KFUPM','ID','Employee ID']);
-          const rank = getField(row, ['Category','Rank','Position']);
-          const nameMain = getField(row, ['Name','Full Name','Employee Name']);
-          const centerMain = getField(row, ['Research Center','Research Centre','Center','Centre','Research Center Name']);
-          const finalMain = getField(row, ['Final Rating','Final Score','Final','Rating']);
-          const posMain = getField(row, ['Positivity Score','Positivity','Positivity %','Positivity Score (%)']);
+      let output = '';
 
-          const pick = pickVerificationFile(rank);
-          const verArr = pick==='tech'?verTechRows:verSciRows;
-          const matched = smartFind(verArr,kfid);
+      for (const sheetName of sheetNames) {
+        if (!mainWorkbook.Sheets[sheetName]) continue;
+        const sheetData = XLSX.utils.sheet_to_json(mainWorkbook.Sheets[sheetName]);
 
-          let statusRow = {sheet:sh,kfupm:kfid,rank:rank,found:!!matched,
-                           nameMain,centerMain,finalMain,posMain,
-                           nameVer:'',centerVer:'',finalVer:'',posVer:'',
-                           nameMatch:false,centerMatch:false,finalMatch:false,posMatch:false};
-          if(!matched){
-            notFoundCount++;
-            results.push(statusRow);
-            continue;
+        let mismatches = [];
+        let matches = 0;
+
+        sheetData.forEach(row => {
+          const id = (row['KFUPM ID'] || row['ID'] || '').toString().trim();
+          const rank = (row['Rank'] || row['Category'] || '').toLowerCase();
+          let source;
+
+          if (sheetName === 'All Researchers') {
+            source = rank.includes('tech') ? techMap : sciMap;
+          } else if (sheetName === 'Research Scientist') {
+            source = sciMap;
+          } else if (sheetName === 'Research Technologist') {
+            source = techMap;
           }
-          // extract fields with best-effort candidate names
-          statusRow.nameVer = getField(matched,['Name','Full Name','Employee Name']);
-          statusRow.centerVer = getField(matched,['Research Center','Research Centre','Center','Centre']);
-          statusRow.finalVer = getField(matched,['Final Rating','Final Score','Final','Rating','Overall Score']);
-          statusRow.posVer = getField(matched,['Positivity Score','Positivity','Positivity %','Positivity Score (%)']);
 
-          statusRow.nameMatch = (norm(statusRow.nameVer)===norm(statusRow.nameMain));
-          statusRow.centerMatch = (norm(statusRow.centerVer)===norm(statusRow.centerMain));
-          statusRow.finalMatch = (norm(statusRow.finalVer)===norm(statusRow.finalMain));
-          statusRow.posMatch = (norm(statusRow.posVer)===norm(statusRow.posMain));
+          const ref = source ? source[id] : null;
 
-          const allOk = statusRow.nameMatch && statusRow.centerMatch && statusRow.finalMatch && statusRow.posMatch;
-          if(allOk) sameCount++; else mismatchCount++;
+          if (ref) {
+            const fields = ['Name', 'Research Center', 'Final Rating', 'Positivity Score'];
+            let mismatchFound = false;
 
-          results.push(statusRow);
+            for (const field of fields) {
+              const mainVal = (row[field] || '').toString().trim();
+              const refVal = (ref[field] || '').toString().trim();
+              if (mainVal !== refVal) {
+                mismatches.push({ KFUPMID: id, Field: field, MainValue: mainVal, RefValue: refVal });
+                mismatchFound = true;
+              }
+            }
+
+            if (!mismatchFound) matches++;
+          }
+        });
+
+        output += `<div class='sheet-header'>${sheetName}</div>`;
+        output += `<div class='summary'>Matches: ${matches} | Mismatches: ${mismatches.length}</div>`;
+
+        if (mismatches.length > 0) {
+          output += `<table><tr><th>KFUPM ID</th><th>Field</th><th>Main Value</th><th>Verification Value</th></tr>`;
+          mismatches.forEach(m => {
+            output += `<tr class='mismatch'><td>${m.KFUPMID}</td><td>${m.Field}</td><td>${m.MainValue}</td><td>${m.RefValue}</td></tr>`;
+          });
+          output += `</table>`;
+        } else {
+          output += `<p style='color:green;'>All values matched for this sheet.</p>`;
         }
       }
 
-      // Render results
-      const out = document.getElementById('results');
-      out.innerHTML='';
+      document.getElementById('results').innerHTML = output;
+    }
 
-      const summary = document.getElementById('summary');
-      summary.style.display='block';
-      summary.innerHTML = `<strong>Summary</strong><br>Total rows checked: ${total}<br>Fully matched: ${sameCount}<br>Partially/fully mismatched: ${mismatchCount}<br>Not found in verification files: ${notFoundCount}`;
+    function mergeAllSheets(workbook) {
+      let mergedData = [];
+      workbook.SheetNames.forEach(name => {
+        const sheet = XLSX.utils.sheet_to_json(workbook.Sheets[name]);
+        mergedData = mergedData.concat(sheet);
+      });
+      return mergedData;
+    }
 
-      const table = document.createElement('table');
-      const thead = document.createElement('thead');
-      thead.innerHTML = `<tr><th>Sheet</th><th>KFUPM ID</th><th>Rank</th><th>Field</th><th>Main file</th><th>Verification file</th><th>Status</th></tr>`;
-      table.appendChild(thead);
-      const tbody = document.createElement('tbody');
+    function mapByKFUPMID(data) {
+      const map = {};
+      data.forEach(row => {
+        const id = (row['KFUPM ID'] || row['ID'] || '').toString().trim();
+        if (id) map[id] = row;
+      });
+      return map;
+    }
 
-      for(const r of results){
-        if(!r.found){
-          const tr = document.createElement('tr');
-          tr.innerHTML = `<td>${r.sheet}</td><td>${r.kfupm}</td><td>${r.rank}</td><td colspan=3>Not found in chosen verification file</td><td class='notfound'>Not Found</td>`;
-          tbody.appendChild(tr);
-          continue;
-        }
-        // name
-        const rows = [
-          {field:'Name', main:r.nameMain, ver:r.nameVer, ok:r.nameMatch},
-          {field:'Research Center', main:r.centerMain, ver:r.centerVer, ok:r.centerMatch},
-          {field:'Final Rating', main:r.finalMain, ver:r.finalVer, ok:r.finalMatch},
-          {field:'Positivity Score', main:r.posMain, ver:r.posVer, ok:r.posMatch},
-        ];
-        for(const item of rows){
-          const tr = document.createElement('tr');
-          tr.innerHTML = `<td>${r.sheet}</td><td>${r.kfupm}</td><td>${r.rank}</td><td>${item.field}</td><td>${item.main}</td><td>${item.ver}</td><td>${item.ok? 'OK' : 'MISMATCH'}</td>`;
-          if(item.ok) tr.className='ok'; else tr.className='mismatch';
-          tbody.appendChild(tr);
-        }
-      }
-      table.appendChild(tbody);
-      out.appendChild(table);
-
-      // enable CSV download
-      const csvRows = [['Sheet','KFUPM ID','Rank','Field','Main','Verification','Status']];
-      for(const r of results){
-        if(!r.found){
-          csvRows.push([r.sheet,r.kfupm,r.rank,'ALL','(not found)','(not found)','NOT FOUND']);
-          continue;
-        }
-        csvRows.push([r.sheet,r.kfupm,r.rank,'Name',r.nameMain,r.nameVer,r.nameMatch? 'OK':'MISMATCH']);
-        csvRows.push([r.sheet,r.kfupm,r.rank,'Research Center',r.centerMain,r.centerVer,r.centerMatch? 'OK':'MISMATCH']);
-        csvRows.push([r.sheet,r.kfupm,r.rank,'Final Rating',r.finalMain,r.finalVer,r.finalMatch? 'OK':'MISMATCH']);
-        csvRows.push([r.sheet,r.kfupm,r.rank,'Positivity Score',r.posMain,r.posVer,r.posMatch? 'OK':'MISMATCH']);
-      }
-
-      const csvContent = csvRows.map(r => r.map(c=> '"'+String(c).replace(/"/g,'""')+'"').join(',')).join('\n');
-
-      document.getElementById('download').onclick = ()=>{
-        const blob = new Blob([csvContent], {type:'text/csv;charset=utf-8;'});
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url; a.download = 'verification_results.csv';
-        document.body.appendChild(a); a.click(); a.remove();
-        URL.revokeObjectURL(url);
-      };
-      document.getElementById('download').disabled = false;
-
-      status.textContent = 'Done.';
-    });
+    function readWorkbook(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = e => {
+          const data = new Uint8Array(e.target.result);
+          const workbook = XLSX.read(data, { type: 'array' });
+          resolve(workbook);
+        };
+        reader.onerror = reject;
+        reader.readAsArrayBuffer(file);
+      });
+    }
   </script>
+
+  <footer>Designed π Hadi</footer>
 </body>
 </html>
